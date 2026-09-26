@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+*.engine
+*.onnx
+02_logs/**/*.log
+.env

@@ -1,0 +1,4 @@
+numpy==1.26.4
+opencv-python-headless==4.10.0.84
+av==12.3.0
+posix-ipc==1.1.1

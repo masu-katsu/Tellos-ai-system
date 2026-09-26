@@ -1,0 +1,60 @@
+version: "3.9"
+
+# Tello -> tello-ingest -> ai-inference -> spatial-processor -> (UDP) -> Unity(別プロセス)
+#
+# tello-ingest と ai-inference / spatial-processor は IPC namespace を共有し、
+# multiprocessing.shared_memory + posix_ipc による「常に最新1フレームのみ」の
+# 受け渡しを行う(Redisは使わない設計)。
+
+services:
+  tello-ingest:
+    build:
+      context: .
+      dockerfile: tello-ingest/Dockerfile
+    container_name: tello-ingest
+    # Telloは自PCのWiFiに直接UDPで話しかけてくるため、ホストネットワークを使う
+    network_mode: host
+    ipc: shareable
+    environment:
+      - TELLO_IP=${TELLO_IP:-192.168.10.1}
+    volumes:
+      - ../02_logs/tello-ingest:/app/logs
+    restart: unless-stopped
+
+  ai-inference:
+    build:
+      context: .
+      dockerfile: ai-inference/Dockerfile
+    container_name: ai-inference
+    depends_on:
+      - tello-ingest
+    ipc: "service:tello-ingest"
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - DEPTH_ENGINE_PATH=/models/depth_anything_v2_vits.engine
+    volumes:
+      - ../03_models/depth-anything-v2:/models:ro
+      - ../02_logs/ai-inference:/app/logs
+    restart: unless-stopped
+
+  spatial-processor:
+    build:
+      context: .
+      dockerfile: spatial-processor/Dockerfile
+    container_name: spatial-processor
+    depends_on:
+      - ai-inference
+    ipc: "service:tello-ingest"
+    # UnityへUDP送信するため、簡易にホストネットワークを使う(必要に応じてbridge+ポート公開に変更可)
+    network_mode: host
+    environment:
+      - UNITY_HOST=${UNITY_HOST:-127.0.0.1}
+      - UNITY_PORT=${UNITY_PORT:-9999}
+      - VOXEL_SIZE_M=${VOXEL_SIZE_M:-0.07}
+      - MAX_VOXELS=${MAX_VOXELS:-4000}
+      - CAM_FX=${CAM_FX:-350.0}
+      - CAM_FY=${CAM_FY:-350.0}
+    volumes:
+      - ../02_logs/spatial-processor:/app/logs
+    restart: unless-stopped
