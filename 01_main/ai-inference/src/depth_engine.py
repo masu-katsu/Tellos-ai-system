@@ -7,10 +7,13 @@ import・起動できるよう、TensorRT/pycudaが無い場合は「輝度ベ�
 に配置すること。
 """
 import logging
+import os
 
 import numpy as np
 
 logger = logging.getLogger("depth_engine")
+
+USE_DUMMY_DEPTH = os.environ.get("USE_DUMMY_DEPTH", "true").strip().lower() in {"1", "true", "yes", "on"}
 
 try:
     import pycuda.autoinit  # noqa: F401  (CUDAコンテキストの暗黙初期化)
@@ -18,9 +21,9 @@ try:
     import tensorrt as trt
 
     _TRT_AVAILABLE = True
-except ImportError:
+except Exception:
     _TRT_AVAILABLE = False
-    logger.warning("TensorRT/pycuda が見つかりません。DUMMY depth モードで起動します。")
+    logger.warning("TensorRT/pycuda が見つからないか、CUDA初期化に失敗しました。DUMMY depth モードで起動します。")
 
 
 class DepthEngine:
@@ -28,11 +31,13 @@ class DepthEngine:
         self.input_size = input_size
         self.engine_path = engine_path
         self._trt_ready = False
+        self._dummy_mode = USE_DUMMY_DEPTH or not _TRT_AVAILABLE
 
-        if _TRT_AVAILABLE:
-            self._load_engine(engine_path)
-        else:
-            logger.warning("DepthEngine: TensorRTなしで起動(ダミー出力)")
+        if self._dummy_mode:
+            logger.warning("DepthEngine: TensorRT 未利用またはダミーモードで起動(ダミー出力)")
+            return
+
+        self._load_engine(engine_path)
 
     def _load_engine(self, engine_path: str):
         trt_logger = trt.Logger(trt.Logger.WARNING)
@@ -45,6 +50,10 @@ class DepthEngine:
             logger.info("TensorRTエンジンを読み込みました: %s", engine_path)
         except FileNotFoundError:
             logger.error("エンジンファイルが見つかりません: %s (ダミーモードで継続)", engine_path)
+            self._dummy_mode = True
+        except Exception as exc:
+            logger.warning("TensorRTエンジン初期化に失敗しました: %s (ダミーモードで継続)", exc)
+            self._dummy_mode = True
 
     def _allocate_buffers(self):
         self.stream = cuda.Stream()
@@ -69,7 +78,7 @@ class DepthEngine:
 
     def infer(self, rgb_420: np.ndarray) -> np.ndarray:
         """rgb_420: (420,420,3) uint8 -> depth: (420,420) float32 相対深度"""
-        if not self._trt_ready:
+        if not self._trt_ready or self._dummy_mode:
             return self._dummy_depth(rgb_420)
 
         x = rgb_420.astype(np.float32) / 255.0

@@ -5,7 +5,10 @@ shared_frame.py と同じ設計方針(上書き式・キューなし)。
 import struct
 from multiprocessing import shared_memory
 
-import posix_ipc
+try:
+    import posix_ipc
+except ImportError:  # Windows host / non-POSIX runtime fallback
+    posix_ipc = None
 
 DEPTH_W = 420
 DEPTH_H = 420
@@ -18,6 +21,25 @@ SHM_NAME = "tello_latest_depth"
 SEM_NAME = "/tello_depth_sem"
 
 
+class _NoopSemaphore:
+    def acquire(self):
+        return None
+
+    def release(self):
+        return None
+
+    def unlink(self):
+        return None
+
+
+def _open_semaphore(name: str, create: bool = False, initial_value: int = 1):
+    if posix_ipc is None:
+        return _NoopSemaphore()
+    if create:
+        return posix_ipc.Semaphore(name, flags=posix_ipc.O_CREAT, initial_value=initial_value)
+    return posix_ipc.Semaphore(name)
+
+
 class SharedDepthBuffer:
     """1フレーム分のDepthマップ(float32, 420x420)+テレメトリを保持する共有メモリ。"""
 
@@ -26,11 +48,11 @@ class SharedDepthBuffer:
         if create:
             self._unlink_stale()
             self.shm = shared_memory.SharedMemory(name=SHM_NAME, create=True, size=size)
-            self.sem = posix_ipc.Semaphore(SEM_NAME, flags=posix_ipc.O_CREAT, initial_value=1)
+            self.sem = _open_semaphore(SEM_NAME, create=True, initial_value=1)
             self.shm.buf[:HEADER_SIZE] = struct.pack(HEADER_FMT, 0, 0.0, 0.0, 0.0, 0.0, 0, 0, 0, 0, 0)
         else:
             self.shm = shared_memory.SharedMemory(name=SHM_NAME, create=False)
-            self.sem = posix_ipc.Semaphore(SEM_NAME)
+            self.sem = _open_semaphore(SEM_NAME, create=False)
 
     @staticmethod
     def _unlink_stale():
@@ -38,6 +60,8 @@ class SharedDepthBuffer:
             shared_memory.SharedMemory(name=SHM_NAME).unlink()
         except FileNotFoundError:
             pass
+        if posix_ipc is None:
+            return
         try:
             posix_ipc.Semaphore(SEM_NAME).unlink()
         except posix_ipc.ExistentialError:
@@ -49,20 +73,24 @@ class SharedDepthBuffer:
         header = struct.pack(
             HEADER_FMT, frame_id & 0xFFFFFFFF, timestamp, pitch, roll, yaw, int(tof_mm), x0, y0, x1, y1
         )
-        self.sem.acquire()
+        if self.sem is not None:
+            self.sem.acquire()
         try:
             self.shm.buf[:HEADER_SIZE] = header
             self.shm.buf[HEADER_SIZE:HEADER_SIZE + DEPTH_BYTES] = depth_f32_bytes
         finally:
-            self.sem.release()
+            if self.sem is not None:
+                self.sem.release()
 
     def read(self):
-        self.sem.acquire()
+        if self.sem is not None:
+            self.sem.acquire()
         try:
             header = bytes(self.shm.buf[:HEADER_SIZE])
             depth = bytes(self.shm.buf[HEADER_SIZE:HEADER_SIZE + DEPTH_BYTES])
         finally:
-            self.sem.release()
+            if self.sem is not None:
+                self.sem.release()
         frame_id, timestamp, pitch, roll, yaw, tof_mm, x0, y0, x1, y1 = struct.unpack(HEADER_FMT, header)
         return {
             "frame_id": frame_id,
@@ -80,6 +108,8 @@ class SharedDepthBuffer:
 
     def unlink(self):
         self.shm.unlink()
+        if self.sem is None:
+            return
         try:
             self.sem.unlink()
         except posix_ipc.ExistentialError:

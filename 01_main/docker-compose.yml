@@ -1,5 +1,3 @@
-version: "3.9"
-
 # Tello -> tello-ingest -> ai-inference -> spatial-processor -> (UDP) -> Unity(別プロセス)
 #
 # tello-ingest と ai-inference / spatial-processor は IPC namespace を共有し、
@@ -29,10 +27,10 @@ services:
     depends_on:
       - tello-ingest
     ipc: "service:tello-ingest"
-    runtime: nvidia
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       - DEPTH_ENGINE_PATH=/models/depth_anything_v2_vits.engine
+      - USE_DUMMY_DEPTH=${USE_DUMMY_DEPTH:-true}
     volumes:
       - ../03_models/depth-anything-v2:/models:ro
       - ../02_logs/ai-inference:/app/logs
