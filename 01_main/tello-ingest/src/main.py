@@ -15,6 +15,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), ".."))  # commonをimpor
 from common.logging_config import setup_logging  # noqa: E402
 from common.shared_frame import SharedFrameBuffer  # noqa: E402
 
+from jpeg_udp_sender import LatestJpegUdpSender  # noqa: E402
 from letterbox import letterbox  # noqa: E402
 from tello_client import TelloClient  # noqa: E402
 from video_decoder import frame_generator  # noqa: E402
@@ -24,25 +25,33 @@ setup_logging(SERVICE_NAME)
 logger = logging.getLogger(SERVICE_NAME)
 
 TELLO_IP = os.environ.get("TELLO_IP", "192.168.10.1")
+UNITY_HOST = os.environ.get("UNITY_HOST", "127.0.0.1")
+VIDEO_UDP_PORT = int(os.environ.get("VIDEO_UDP_PORT", "9998"))
+VIDEO_JPEG_QUALITY = int(os.environ.get("VIDEO_JPEG_QUALITY", "80"))
 LOG_EVERY_N_FRAMES = 30
 RETRY_INTERVAL_S = 2.0
 
 
 def run():
     client = TelloClient(TELLO_IP)
-    client.connect()
-
-    state = client.state.snapshot()
-    logger.info("Tello connected. battery=%s%%", state.get("battery"))
-
-    shm = SharedFrameBuffer(create=True)
+    shm = None
+    video_sender = None
     frame_id = 0
 
     try:
+        client.connect()
+        state = client.state.snapshot()
+        logger.info("Tello connected. battery=%s%%", state.get("battery"))
+
+        shm = SharedFrameBuffer(create=True)
+        video_sender = LatestJpegUdpSender(UNITY_HOST, VIDEO_UDP_PORT, VIDEO_JPEG_QUALITY)
+        logger.info("video UDP sender started. target=%s:%d", UNITY_HOST, VIDEO_UDP_PORT)
+
         for rgb, _pts in frame_generator(client.video_url()):
             frame_id += 1
             canvas, valid_region = letterbox(rgb)
             state = client.state.snapshot()
+            video_sender.submit(frame_id, canvas)
 
             shm.write(
                 frame_id=frame_id,
@@ -62,8 +71,11 @@ def run():
                     state["tof_mm"], state["battery"],
                 )
     finally:
+        if video_sender is not None:
+            video_sender.close()
         client.close()
-        shm.unlink()
+        if shm is not None:
+            shm.unlink()
 
 
 def main():

@@ -15,6 +15,9 @@ services:
     ipc: shareable
     environment:
       - TELLO_IP=${TELLO_IP:-192.168.10.1}
+      - UNITY_HOST=${UNITY_HOST:-127.0.0.1}
+      - VIDEO_UDP_PORT=${VIDEO_UDP_PORT:-9998}
+      - VIDEO_JPEG_QUALITY=${VIDEO_JPEG_QUALITY:-80}
     volumes:
       - ../02_logs/tello-ingest:/app/logs
     restart: unless-stopped
