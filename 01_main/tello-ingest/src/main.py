@@ -51,7 +51,9 @@ def run():
             frame_id += 1
             canvas, valid_region = letterbox(rgb)
             state = client.state.snapshot()
-            video_sender.submit(frame_id, canvas)
+            # Unity向け映像は、深度推定用の420x420(黒帯あり)ではなく元フレームを渡す。
+            # 送信側で4:3(480x360)に整えてJPEG化する(通信契約: 4:3, 最大640x480)。
+            video_sender.submit(frame_id, rgb)
 
             shm.write(
                 frame_id=frame_id,

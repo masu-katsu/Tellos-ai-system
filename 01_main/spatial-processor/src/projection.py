@@ -54,14 +54,26 @@ def estimate_scale(depth: np.ndarray, valid_region, tof_mm: float) -> float:
 
 
 def rotation_matrix(pitch_deg: float, roll_deg: float, yaw_deg: float) -> np.ndarray:
-    """IMUのpitch/roll/yaw(度)から回転行列を作成する(カメラ座標系 -> ローカルワールド座標系)"""
+    """
+    IMUのpitch/roll/yaw(度)から回転行列を作成する(カメラ座標系 -> ローカルワールド座標系)。
+
+    Unity側との通信契約(7.2 姿勢)に合わせる:
+      - 軸: +X=画像右, +Y=画像下, +Z=カメラ前方 (右手系)
+      - 正角度は各軸の正方向まわりの右ねじ方向
+          Pitch: X軸まわり (正 = 機首上げ)
+          Yaw  : Y軸まわり (正 = 右旋回)
+          Roll : Z軸まわり (正 = 右側が下がる)
+      - 合成: R = Ry(Yaw) @ Rx(Pitch) @ Rz(Roll)
+        (列ベクトルに対し Roll -> Pitch -> Yaw の順に作用する)
+    Unityはボクセルに姿勢を再適用しないため、ここで使う R とヘッダーの姿勢値は常に一致させること。
+    """
     p, r, y = np.radians([pitch_deg, roll_deg, yaw_deg])
 
     rx = np.array([[1, 0, 0], [0, np.cos(p), -np.sin(p)], [0, np.sin(p), np.cos(p)]])
-    ry = np.array([[np.cos(r), 0, np.sin(r)], [0, 1, 0], [-np.sin(r), 0, np.cos(r)]])
-    rz = np.array([[np.cos(y), -np.sin(y), 0], [np.sin(y), np.cos(y), 0], [0, 0, 1]])
+    ry = np.array([[np.cos(y), 0, np.sin(y)], [0, 1, 0], [-np.sin(y), 0, np.cos(y)]])
+    rz = np.array([[np.cos(r), -np.sin(r), 0], [np.sin(r), np.cos(r), 0], [0, 0, 1]])
 
-    return (rz @ ry @ rx).astype(np.float32)
+    return (ry @ rx @ rz).astype(np.float32)
 
 
 def to_local_world(points_cam: np.ndarray, pitch: float, roll: float, yaw: float) -> np.ndarray:
